@@ -1,19 +1,19 @@
 # Working Directory
 
-awesome-python3-webapp/  <-- ¸ùÄ¿Â¼  
+awesome-python3-webapp/  <-- æ ¹ç›®å½•  
 |  
-+- backup/               <-- ±¸·ÝÄ¿Â¼  
++- backup/               <-- å¤‡ä»½ç›®å½•  
 |  
-+- conf/                 <-- ÅäÖÃÎÄ¼þ  
++- conf/                 <-- é…ç½®æ–‡ä»¶  
 |  
-+- dist/                 <-- ´ò°üÄ¿Â¼  
++- dist/                 <-- æ‰“åŒ…ç›®å½•  
 |  
-+- www/                  <-- WebÄ¿Â¼£¬´æ·Å.pyÎÄ¼þ  
-|  |  
-|  +- static/            <-- ´æ·Å¾²Ì¬ÎÄ¼þ  
-|  |  
-|  +- templates/         <-- ´æ·ÅÄ£°åÎÄ¼þ  
++- www/                  <-- Webç›®å½•ï¼Œå­˜æ”¾.pyæ–‡ä»¶  
+|    |  
+|    +- static/          <-- å­˜æ”¾é™æ€æ–‡ä»¶  
+|    |  
+|    +- templates/       <-- å­˜æ”¾æ¨¡æ¿æ–‡ä»¶  
 |  
-+- ios/                  <-- ´æ·ÅiOS App¹¤³Ì  
++- ios/                  <-- å­˜æ”¾iOS Appå·¥ç¨‹  
 |  
-+- LICENSE               <-- ´úÂëLICENSE  
++- LICENSE               <-- ä»£ç LICENSE  
