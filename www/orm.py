@@ -20,8 +20,8 @@ async def create_pool(loop, **kw):
     __pool = await aiomysql.create_pool(
         host=kw.get('host', 'localhost'),                   # 主机ip，默认本机
         port=kw.get('port', 3306),                          # 端口，默认3306
-        user=kw['root'],                                    # 用户名
-        password=kw['admin'],                               # 用户口令
+        user=kw['user'],                                    # 用户名
+        password=kw['password'],                            # 用户口令
         db=kw['db'],                                        # 选择数据库
         charset=kw.get('charset', 'utf8'),                  # 设置数据库编码，默认utf8
         autocommit=kw.get('autocommit', True),              # 设置自动提交事务，默认打开
@@ -29,6 +29,13 @@ async def create_pool(loop, **kw):
         minsize=kw.get('minsize', 1),                       # 设置最少连接数，默认1
         loop=loop                                           # 需要传递一个事件循环实例，若无特别声明，默认使用asyncio.get_event_loop()
     )
+
+#
+async def destory_pool():
+    global __pool
+    if __pool is not None :
+        __pool.close()
+        await __pool.wait_closed()
 
 # 实现SELECT语句
 async def select(sql, args, size=None):
@@ -76,6 +83,7 @@ class Field(object):
         self.column_type = column_type
         self.primary_key = primary_key
         self.default = default
+        
     def __str__(self):                                      # print（Field_object）返回类名Field，数据类型，列名
         return '<%s, %s:%s>' % (self.__class__.__name__, self.column_type, self.name)
 
@@ -144,15 +152,19 @@ class Model(dict, metaclass=ModelMetaclass):
     # 没__new__()，会使用父类ModelMetaclass的__new__()来生成类
     def __init__(self, **kw):
         super(Model, self).__init__(**kw)
+        
     def __getattr__(self, key):                             # getattr、settattr实现属性动态绑定和获取
         try:
             return self[key]
         except KeyError:
             raise AttributeError(r"'Model' object has no attribute '%s'" % key)
+            
     def __setattr__(self, key, value):
         self[key] = value
+        
     def getValue(self, key):                                # 返回属性值，默认None
         return getattr(self, key, None)
+        
     def getValueOrDefault(self, key):                       # 返回属性值，空则返回默认值
         value = getattr(self, key, None)
         if value is None:
@@ -162,6 +174,7 @@ class Model(dict, metaclass=ModelMetaclass):
                 logging.debug('using default value for %s: %s' % (key, str(value)))
                 setattr(self, key, value)
         return value
+        
     @classmethod                                            # 添加类方法，对应查表，默认查整个表，可通过where limit设置查找条件
     async def findAll(cls, where=None, args=None, **kw):
         ' find objects by where clause. '
@@ -188,6 +201,7 @@ class Model(dict, metaclass=ModelMetaclass):
                 raise ValueError('Invalid limit value: %s' % str(limit))
         rs = await select(' '.join(sql), args)              # 构造更新后的select语句，并执行，返回属性值[{},{},{}]
         return [cls(**r) for r in rs]                       # 返回一个列表,每个元素为每行记录作为一个dict传入当前类的对象的返回值
+        
     @classmethod                                            # 添加类方法，查找特定列，可通过where设置条件
     async def findNumber(cls, selectField, where=None, args=None):
         ' find number by select and where. '
@@ -199,6 +213,7 @@ class Model(dict, metaclass=ModelMetaclass):
         if len(rs) == 0:
             return None
         return rs[0]['_num_']                               # 根据别名key取值
+    
     @classmethod                                            # 类方法，根据primary key查询一条记录
     async def find(cls, pk):
         ' find object by primary key. '
@@ -206,18 +221,21 @@ class Model(dict, metaclass=ModelMetaclass):
         if len(rs) == 0:
             return None
         return cls(**rs[0])                                 # 将dict作为关键字参数传入当前类的对象
+    
     async def save(self):                                   # 实例方法，映射插入记录
         args = list(map(self.getValueOrDefault, self.__fields__))   # 非主键列的值列表
         args.append(self.getValueOrDefault(self.__primary_key__))   # 添加主键值
         rows = await execute(self.__insert__, args)                 # 执行insert语句
         if rows != 1:
             logging.warn('failed to insert record: affected rows: %s' % rows)
+    
     async def update(self):                                 # 实例方法，映射更新记录
         args = list(map(self.getValue, self.__fields__))
         args.append(self.getValue(self.__primary_key__))
         rows = await execute(self.__update__, args)
         if rows != 1:
             logging.warn('failed to update by primary key: affected rows: %s' % rows)
+    
     async def remove(self):                                 # 实例方法，映射根据主键值删除记录
         args = [self.getValue(self.__primary_key__)]
         rows = await execute(self.__delete__, args)
