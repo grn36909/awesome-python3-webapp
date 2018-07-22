@@ -5,7 +5,7 @@ __author__ = 'Michael Liao'
 
 '''
 创建Model
-手动向数据库(awesome)中插入一列信息
+数据库(awesome)内 findAll(查找), remove(删除), 和save(添加)操作演示
 '''
 
 import asyncio
