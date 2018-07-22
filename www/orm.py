@@ -2,7 +2,11 @@
 # -*- coding: utf-8 -*-
 
 __author__ = 'Michael Liao'
+
 '''
+编写orm模块
+ORM（Object-Relational Mapping），作用是：把关系数据库的表结构映射到对象上。
+引用参考：https://blog.csdn.net/qq_38801354/article/details/72858338
 注释参考：https://github.com/justoneliu/web_app/blob/master/www/orm.py
 '''
 
@@ -13,7 +17,8 @@ import aiomysql
 def log(sql, args=()):
     logging.info('SQL: %s' % sql)
 
-# 创建全局连接池,**kw关键字参数集
+# 创建一个全局的连接池，每个HTTP请求都从池中获得数据库连接
+# 连接池由全局变量__pool存储，缺省情况下将编码设置为utf8，自动提交事务
 async def create_pool(loop, **kw):
     logging.info('create database connection pool...')
     global __pool                                           # 将__pool定义为全局变量
@@ -31,11 +36,14 @@ async def create_pool(loop, **kw):
     )
 
 # 实现SELECT语句
+# 单独封装select，其他insert,update,delete一并封装，理由如下：
+# 使用Cursor对象执行insert，update，delete语句时，执行结果由rowcount返回影响的行数，就可以拿到执行结果。
+# 使用Cursor对象执行select语句时，通过featchall()可以拿到结果集。结果集是一个list，每个元素都是一个tuple，对应一行记录。
 async def select(sql, args, size=None):
     log(sql, args)                                          # 记录sql操作
     global __pool                                           # 使用全局变量__pool
     async with __pool.get() as conn:                        # 从连接池中获取一个连接，使用完后自动释放
-        async with conn.cursor(aiomysql.DictCursor) as cur: # 创建一个游标，返回由dict组成的list
+        async with conn.cursor(aiomysql.DictCursor) as cur: # 创建一个游标，返回由dict组成的list, (aiomysql.DictCursor的作用使生成结果是一个dict)
             await cur.execute(sql.replace('?', '%s'), args or ())   # 执行SQL，mysql的占位符是%s，和python一样，为了coding的便利，先用SQL的占位符？写SQL语句，最后执行时在转换过来
             if size:
                 rs = await cur.fetchmany(size)              # 只读取size条记录
@@ -62,7 +70,7 @@ async def execute(sql, args, autocommit=True):
             raise
         return affected
 
-# 制作参数字符串
+# 用于输出元类中创建sql_insert语句中的占位符
 def create_args_string(num):
     L = []
     for n in range(num):                                    # SQL的占位符是？，num是多少就插入多少个占位符
@@ -106,13 +114,14 @@ class TextField(Field):
 
 # 定义元类
 class ModelMetaclass(type):
-    def __new__(cls, name, bases, attrs):                   # 用 metaclass = ModelMetaclass 创建类时，通过这个方法生成类
-        if name=='Model':                                   # 定制Model类
+    def __new__(cls, name, bases, attrs):                   # 当前准备创建的类的对象；类的名字；类继承的父类集合；类的方法集合
+        if name=='Model':                                   # #排除掉对Model类的修改
             return type.__new__(cls, name, bases, attrs)    # 当前准备创建的类的对象、类的名字model、类继承的父类集合、类的方法集合
         tableName = attrs.get('__table__', None) or name    # 获取表名，默认为None，或为类名
         logging.info('found model: %s (table: %s)' % (name, tableName))     # 类名、表名
-        mappings = dict()                                   # 用于存储列名和对应的数据类型
-        fields = []                                         # 用于存储非主键的列
+        # 获取所有的Field和主键名:
+        mappings = dict()                                   # 用于存储列名和对应的数据类型,保存映射关系
+        fields = []                                         # 用于存储非主键的列,保存除主键外的属性
         primaryKey = None                                   # 用于主键查重，默认为None
         for k, v in attrs.items():                          # 遍历 attrs 方法集合
             if isinstance(v, Field):                        # 提取数据类的列
@@ -121,14 +130,15 @@ class ModelMetaclass(type):
                 if v.primary_key:                           # 查找主键并查找重复的主键，有重复则抛出异常
                     if primaryKey:                          # 找到主键
                         raise StandardError('Duplicate primary key for field: %s' % k)  # 重复主键
-                    primaryKey = k
+                    primaryKey = k                          # 此列设为列表的主键
                 else:
-                    fields.append(k)                        # 存储非主键的列名
+                    fields.append(k)                        # 存储非主键的列名,保存除主键外的属性
         if not primaryKey:
             raise StandardError('Primary key not found.')   # 整个表不存在主键时抛出异常
         for k in mappings.keys():                           # 过滤掉列，只剩方法
-            attrs.pop(k)
-        escaped_fields = list(map(lambda f: '`%s`' % f, fields))    # 给非主键列加``（可执行命令）区别于''（字符串效果）
+            attrs.pop(k)                                    # 从类属性中删除Field属性,否则，容易造成运行时错误（实例的属性会遮盖类的同名属性）
+        escaped_fields = list(map(lambda f: '`%s`' % f, fields))    # 转换为sql语法,给非主键列加``（可执行命令）区别于''（字符串效果）
+        # 创建供Model类使用属性
         attrs['__mappings__'] = mappings                    # 保持属性和列的映射关系
         attrs['__table__'] = tableName                      # 表名
         attrs['__primary_key__'] = primaryKey               # 主键属性名
@@ -139,22 +149,26 @@ class ModelMetaclass(type):
         attrs['__delete__'] = 'delete from `%s` where `%s`=?' % (tableName, primaryKey) # 构建 delete 执行语句，根据主键值删除对应行
         return type.__new__(cls, name, bases, attrs)        # 当前准备创建的类的对象、类的名字model、类继承的父类集合、类的方法集合
 
-#定义Model类，模板类，继承dict的属性，继续元类获得属性和列的映射关系，即ORM
+#定义Model基类，模板类，继承dict的属性，继续元类获得属性和列的映射关系，即ORM
 class Model(dict, metaclass=ModelMetaclass):
     # 没__new__()，会使用父类ModelMetaclass的__new__()来生成类
     def __init__(self, **kw):
         super(Model, self).__init__(**kw)
+
     def __getattr__(self, key):                             # getattr、settattr实现属性动态绑定和获取
         try:
             return self[key]
         except KeyError:
             raise AttributeError(r"'Model' object has no attribute '%s'" % key)
+
     def __setattr__(self, key, value):
         self[key] = value
+
     def getValue(self, key):                                # 返回属性值，默认None
-        return getattr(self, key, None)
+        return getattr(self, key, None)                     # 直接调回内置函数，注意这里没有下划符,注意这里None的用处,是为了当user没有赋值数据时，返回None，调用于update
+
     def getValueOrDefault(self, key):                       # 返回属性值，空则返回默认值
-        value = getattr(self, key, None)
+        value = getattr(self, key, None)                    # 第三个参数None，可以在没有返回数值时，返回None，调用于save
         if value is None:
             field = self.__mappings__[key]                  # 查取属性对应的列的数量类型默认值
             if field.default is not None:
@@ -162,6 +176,7 @@ class Model(dict, metaclass=ModelMetaclass):
                 logging.debug('using default value for %s: %s' % (key, str(value)))
                 setattr(self, key, value)
         return value
+
     @classmethod                                            # 添加类方法，对应查表，默认查整个表，可通过where limit设置查找条件
     async def findAll(cls, where=None, args=None, **kw):
         ' find objects by where clause. '
@@ -188,6 +203,7 @@ class Model(dict, metaclass=ModelMetaclass):
                 raise ValueError('Invalid limit value: %s' % str(limit))
         rs = await select(' '.join(sql), args)              # 构造更新后的select语句，并执行，返回属性值[{},{},{}]
         return [cls(**r) for r in rs]                       # 返回一个列表,每个元素为每行记录作为一个dict传入当前类的对象的返回值
+
     @classmethod                                            # 添加类方法，查找特定列，可通过where设置条件
     async def findNumber(cls, selectField, where=None, args=None):
         ' find number by select and where. '
@@ -199,6 +215,7 @@ class Model(dict, metaclass=ModelMetaclass):
         if len(rs) == 0:
             return None
         return rs[0]['_num_']                               # 根据别名key取值
+
     @classmethod                                            # 类方法，根据primary key查询一条记录
     async def find(cls, pk):
         ' find object by primary key. '
@@ -206,12 +223,14 @@ class Model(dict, metaclass=ModelMetaclass):
         if len(rs) == 0:
             return None
         return cls(**rs[0])                                 # 将dict作为关键字参数传入当前类的对象
+
     async def save(self):                                   # 实例方法，映射插入记录
         args = list(map(self.getValueOrDefault, self.__fields__))   # 非主键列的值列表
         args.append(self.getValueOrDefault(self.__primary_key__))   # 添加主键值
         rows = await execute(self.__insert__, args)                 # 执行insert语句
         if rows != 1:
             logging.warn('failed to insert record: affected rows: %s' % rows)
+
     async def update(self):                                 # 实例方法，映射更新记录
         args = list(map(self.getValue, self.__fields__))
         args.append(self.getValue(self.__primary_key__))
